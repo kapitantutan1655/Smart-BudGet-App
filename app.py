@@ -1,17 +1,27 @@
+from http.client import responses
+
 import streamlit as st
 import pandas as pd
-import os
+from supabase import create_client, Client
 
 st.set_page_config(page_title="Smart BudGet", page_icon="💰", layout="centered")
+
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = Client = init_connection()
 
 @st.dialog("Welcome to Smart BudGet!")
 def welcome_popup():
     st.write("Guide on how to use the Smart BudGet app")
     st.markdown("""
         * At the corner top left, that is the section where
-        you can input your allowance, day, and a fixed bill
-        * Type your expenses into the form
-        * Track your allowance seamlessly
+        you can input your allowance, day, and a fixed bill.
+        * Type your expenses into the form.
+        * Track your allowance seamlessly!
         """)
 
     if st.button("Let's Get Started!"):
@@ -24,11 +34,26 @@ if "welcome_popup" not in st.session_state:
 if not st.session_state.welcome_popup:
     welcome_popup()
 
-CSV_FILE = "expenses_data.csv"
+try:
+    response = supabase.table("expenses").select("*").execute()
+    expenses_data = pd.DataFrame(response.data)
+    if expenses_data.empty or "Description" not in expenses_data.columns:
+        expenses_data = pd.DataFrame(columns=["Description", "Amount"])
+except:
+    expenses_data = pd.DataFrame(columns=["Description", "Amount"])
 
-if os.path.exists(CSV_FILE):
-    if "expenses" not in st.session_state:
-        st.session_state.expenses = pd.read_csv(CSV_FILE)
+if "expenses" not in st.session_state:
+    st.session_state.expenses = expenses_data
+
+try:
+    hist_response = supabase.table("history").select("*").execute()
+    history_data = hist_response.data if hist_response.data else []
+except:
+    history_data = []
+
+if "expenses_history" not in st.session_state:
+    st.session_state.expenses_history = history_data
+
 else:
     if "expenses" not in st.session_state:
         st.session_state.expenses = pd.DataFrame(columns=["Description", "Amount"])
@@ -75,6 +100,11 @@ if "expenses" not in st.session_state:
     st.session_state.expenses = pd.DataFrame(columns=["Description", "Amount"])
 
 if added and expense_desc:
+    supabase.table("expenses").insert({
+        "Description": expense_desc,
+        "Amount": float(expense_amount)
+    }).execute()
+
     new_data = pd.DataFrame({
         "Description": [expense_desc],
         "Amount": [expense_amount],
@@ -96,20 +126,15 @@ if submitted:
 
         status = "Under Budget 🟢" if expense_amount <= daily_limit else "Over Budget 🔴"
 
-        st.session_state.expenses_history.append({
+        supabase.table("history").insert({
             "Day": len(st.session_state.expenses_history) + 1,
-            "Total Amount Spent": total_amount,
+            "Total Amount Spent": float(total_amount),
             "Daily Limit Was": round(daily_limit, 2),
             "Status": status
-        })
-
-        history_df = pd.DataFrame(st.session_state.expenses_history)
-        history_df.to_csv("history_data.csv", index=False)
+        }).execute()
 
         st.session_state.expenses = pd.DataFrame(columns=["Description", "Amount"])
-        st.session_state.expenses.to_csv(CSV_FILE, index=False)
 
-        st.success("Day submitted and saved to history successfully!")
         st.rerun()
     else:
         st.warning("Please enter an amount greater than zero.")
