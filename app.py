@@ -20,6 +20,8 @@ def welcome_popup():
     st.markdown("""
         * At the corner top left, that is the section where
         you can input your allowance, day, and a fixed bill.
+        * At the same sidebar section, you can click the 
+        "Reset Entire Budget" to restart the entire budget cycle.
         * Type your expenses into the form.
         * Track your allowance seamlessly!
         """)
@@ -47,12 +49,10 @@ if "expenses" not in st.session_state:
 
 try:
     hist_response = supabase.table("history").select("*").execute()
-    history_data = hist_response.data if hist_response.data else []
+    st.session_state.expenses_history = hist_response.data if hist_response.data else []
 except:
-    history_data = []
-
-if "expenses_history" not in st.session_state:
-    st.session_state.expenses_history = history_data
+    if "expenses_history" not in st.session_state:
+        st.session_state.expenses_history = []
 
 else:
     if "expenses" not in st.session_state:
@@ -72,6 +72,18 @@ st.sidebar.header("Budget Settings")
 input_balance = st.sidebar.number_input("Starting Balance (₱)", value=.0, step=0.0)
 total_days = st.sidebar.number_input("Days Until Next Allowance", value=0, step=1)
 fixed_bills = st.sidebar.number_input("Upcoming Fixed Bills (₱)", value=0.0, step=0.0)
+
+st.sidebar.divider()
+
+if st.sidebar.button("🔄 Reset Entire Budget"):
+    supabase.table("history").delete().neq("Day", 0).execute()
+    supabase.table("expenses").delete().neq("Amount", -1).execute()
+
+    st.session_state.expenses_history = []
+    st.session_state.expenses = pd.DataFrame(columns=["Description", "Amount"])
+    st.session_state.balance = 0.0
+    st.session_state.initial_balance = 0.0
+    st.rerun()
 
 if input_balance != st.session_state.initial_balance:
     st.session_state.initial_balance = input_balance
@@ -123,16 +135,21 @@ submitted = st.button("Submit")
 if submitted:
     if expense_amount > 0:
         st.session_state.balance -= expense_amount
+        status = "Under Budget 🟢" if total_amount <= daily_limit else "Over Budget 🔴"
 
-        status = "Under Budget 🟢" if expense_amount <= daily_limit else "Over Budget 🔴"
-
-        supabase.table("history").insert({
+        new_history_item = {
             "Day": len(st.session_state.expenses_history) + 1,
             "Total Amount Spent": float(total_amount),
             "Daily Limit Was": round(daily_limit, 2),
             "Status": status
-        }).execute()
+        }
 
+        supabase.table("history").insert(new_history_item).execute()
+
+        st.session_state.expenses_history.append(new_history_item)
+
+        supabase.table("expenses").delete().neq("Description",
+                                                "").execute()  # optional if you want to clear DB expenses too
         st.session_state.expenses = pd.DataFrame(columns=["Description", "Amount"])
 
         st.rerun()
